@@ -27,13 +27,20 @@ AGES = ["Trẻ em", "Thiếu niên", "Thanh niên", "Trung niên", "Cao tuổi"]
 REGIONS = ["Bắc", "Trung", "Nam", "Chưa rõ"]
 SOURCES = {"upload": "Tải lên", "record": "Ghi âm", "design": "Thiết kế", "restore": "Khôi phục"}
 
-# Mẫu cài đặt tạo giọng
+# Cách tạo giọng ở thẻ Tạo giọng. "Để app chọn" tự lấy một trong ba mẫu theo độ dài văn bản và giọng đang dùng;
+# "Tự chỉnh" dùng đúng các thanh trong mục Tuỳ chỉnh chi tiết.
+MODE_AUTO = "✨ Để app chọn"
+MODE_CUSTOM = "🛠 Tự chỉnh"
 PRESETS = {
-    "Giống giọng mẫu nhất / Max similarity": {"num_step": 48, "guidance_scale": 2.0, "takes": 3},
-    "Cân bằng / Balanced": {"num_step": 32, "guidance_scale": 2.0, "takes": 1},
-    "Nhanh / Fast": {"num_step": 16, "guidance_scale": 2.0, "takes": 1},
+    "🎯 Giống giọng nhất": {"num_step": 48, "guidance_scale": 2.0, "takes": 3,
+                          "desc": "Tạo 3 bản, xếp bản giống giọng mẫu nhất lên đầu. Lâu gấp khoảng 3 lần. Hợp cho bản chính."},
+    "⚖️ Cân bằng": {"num_step": 32, "guidance_scale": 2.0, "takes": 1,
+                   "desc": "Tạo 1 bản, chất lượng tốt. Hợp với đa số trường hợp."},
+    "⚡ Nháp nhanh": {"num_step": 16, "guidance_scale": 2.0, "takes": 1,
+                    "desc": "Tạo 1 bản thật nhanh để nghe thử nội dung, ngắt nghỉ. Chất lượng thấp hơn."},
 }
-DEFAULT_PRESET = "Cân bằng / Balanced"
+BEST, BALANCED, FAST = PRESETS
+SPEEDS = [("Chậm rãi", 0.9), ("Bình thường", 1.0), ("Nhanh", 1.1)]   # tốc độ đọc (nhãn, hệ số)
 
 _WINGET_FF = Path.home() / r"AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin"
 FFMPEG = shutil.which("ffmpeg") or str(_WINGET_FF / "ffmpeg.exe")

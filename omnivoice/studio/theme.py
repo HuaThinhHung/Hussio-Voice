@@ -277,6 +277,11 @@ footer {{display: none !important;}}
 .tips {{border: 1px dashed var(--hx-line2); border-radius: 16px; padding: 12px 16px; color: var(--hx-text2); font-size: 13px;
   line-height: 1.75;}}
 .tips b {{color: var(--hx-text);}}
+.rec {{border: 1px solid var(--hx-brand); border-radius: 16px; padding: 12px 14px; background: var(--hx-soft); font-size: 13.5px;
+  line-height: 1.6; color: var(--hx-text2);}}
+.rec .h {{font-size: 15px; color: var(--hx-text); margin-bottom: 2px;}} .rec b {{color: var(--hx-text);}}
+.rec .desc, .rec .alt {{color: var(--hx-muted); font-size: 12.5px; margin-top: 2px;}}
+.rec .set {{margin-top: 8px;}} .rec .set .pill {{background: var(--hx-card); font-size: 12.5px; margin-bottom: 0;}}
 .guide h3 {{color: var(--hx-text) !important;}}
 .guide table {{width: 100%;}}
 .foot {{text-align: center; font-size: 12px; color: var(--hx-muted); padding: 22px 0 4px;}}

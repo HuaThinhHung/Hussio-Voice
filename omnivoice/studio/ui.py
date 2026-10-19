@@ -11,8 +11,8 @@ import soundfile as sf
 import torch
 
 from . import audio, history, similarity, store
-from .config import (AGES, DATA, DEFAULT_PRESET, DESIGN_REF_SENTENCE, GENDERS, OUTPUTS, PRESETS, REGIONS, SETTINGS_FILE,
-                     SOURCES, TEST_SENTENCE, ensure_dirs)
+from .config import (AGES, BALANCED, BEST, DATA, DESIGN_REF_SENTENCE, GENDERS, MODE_AUTO, MODE_CUSTOM, OUTPUTS, PRESETS,
+                     REGIONS, SETTINGS_FILE, SOURCES, SPEEDS, TEST_SENTENCE, ensure_dirs)
 from .engine import Studio
 from .textproc import apply_dict, estimate, load_dict, output_name, save_dict
 from .theme import (CSS, TOGGLE_JS, brand_html, empty, foot_html, hero_html, icon, msg, page_head, pill, step,
@@ -23,7 +23,8 @@ NAV = [("home", "Trang chủ"), ("gen", "Tạo giọng"), ("lib", "Thư viện")
        ("hist", "Lịch sử"), ("set", "Cài đặt")]
 CARDS = [("gen", "Tạo giọng"), ("lib", "Thư viện"), ("add", "Thêm giọng"), ("design", "Thiết kế"), ("hist", "Lịch sử"),
          ("set", "Cài đặt")]
-TAKE_HEAD = ["Bản / Take", "Độ giống / Similarity", "Đánh giá / Rating", "Xếp hạng / Rank", "Độ dài / Length", "File"]
+TAKE_HEAD = ["Bản", "Giống", "Đánh giá", "Xếp hạng", "Dài"]
+TMP_SRC = "Giọng tạm (tải file, không lưu)"
 HIST_HEAD = ["ID", "Lúc / Time", "Giọng / Voice", "Văn bản / Text", "Độ giống", "Độ dài", "File"]
 ALL = "Tất cả"
 TRASH_HEAD = ["Mã", "Tên giọng", "Giới tính", "Độ tuổi", "Xoá lúc"]
@@ -118,6 +119,54 @@ def voice_info(slug) -> tuple[str, str | None]:
     return voice_card(m), (str(p["sample"]) if p["sample"].exists() else str(p["ref"]))
 
 
+# ── Cách tạo giọng: app đề xuất theo độ dài văn bản và giọng đang dùng ────────
+def recommend(sec: float, m: dict | None, temp: bool) -> tuple[str, str]:
+    """Cách tạo app đề xuất (khoá trong PRESETS) và lý do."""
+    if temp:
+        return BEST, "Giọng tạm chưa được kiểm tra trước, nên tạo 3 bản rồi chọn bản giống giọng mẫu nhất."
+    sim = (m or {}).get("sample_sim")
+    if sec <= 20:
+        return BEST, f"Đoạn ngắn (khoảng {_secs(sec)}): tạo 3 bản để chọn bản giống nhất mà vẫn chờ không lâu."
+    if sec <= 60:
+        if sim is not None and sim < 0.92:
+            return BEST, f"Giọng này khó bắt chước hơn (bản nghe thử giống {_pct(sim)}): nên tạo 3 bản để chọn."
+        good = f", giọng này bắt chước tốt ({_pct(sim)})" if sim else ""
+        return BALANCED, f"Đoạn vừa (khoảng {_secs(sec)}){good}: 1 bản là đủ."
+    return BALANCED, f"Đoạn dài (khoảng {_secs(sec)}): tạo 1 bản cho đỡ chờ. Câu nào chưa ổn thì tạo lại riêng câu đó."
+
+
+def plan(mode, text, use_d, slug, src, takes, steps, gs) -> dict:
+    """Thông số sẽ dùng khi bấm TẠO GIỌNG. Tính lại ở máy chủ nên luôn khớp cách tạo đang chọn."""
+    temp = src == TMP_SRC
+    t = apply_dict(text or "") if use_d else (text or "")
+    syl, sec = estimate(t)
+    rec, why = recommend(sec, None if temp or not slug else store.get(slug), temp)
+    out = dict(rec=rec, why=why, syl=syl, sec=sec)
+    if mode == MODE_CUSTOM:
+        return out | dict(key=MODE_CUSTOM, takes=int(takes), steps=int(steps), gs=float(gs))
+    key = rec if mode == MODE_AUTO else (mode if mode in PRESETS else BALANCED)
+    p = PRESETS[key]
+    return out | dict(key=key, takes=p["takes"], steps=p["num_step"], gs=p["guidance_scale"])
+
+
+def rec_html(mode, p: dict, speed, fmt) -> str:
+    """Khung "App đề xuất" ở bước 3: cách tạo, lý do, các thông số sẽ dùng."""
+    if mode == MODE_AUTO and not p["syl"]:
+        return ('<div class="rec"><div class="h">✨ Để app chọn</div><div class="why">Nhập văn bản, app sẽ chọn cách tạo '
+                'hợp với độ dài đoạn và giọng đang dùng.</div></div>')
+    q = "chất lượng " + ("cao" if p["steps"] >= 40 else "tốt" if p["steps"] >= 24 else "nháp")
+    sp = next((lab for lab, v in SPEEDS if abs(v - float(speed or 1)) < 1e-6), f"{speed}×")
+    pills = "".join(pill(x) for x in (f"{p['takes']} bản", f"{q} ({p['steps']} bước)", f"tốc độ {sp.lower()}",
+                                      (fmt or "wav").upper()))
+    if mode == MODE_AUTO:
+        head, why, alt = f"✨ App chọn: <b>{p['key']}</b>", p["why"], f'<div class="desc">{PRESETS[p["key"]]["desc"]}</div>'
+    else:
+        head = f"Đang dùng: <b>{mode}</b>"
+        why = PRESETS[mode]["desc"] if mode in PRESETS else "Dùng đúng các thông số bạn chỉnh trong mục Tuỳ chỉnh chi tiết."
+        alt = (f'<div class="alt">App gợi ý: <b>{p["rec"]}</b>. {p["why"]}</div>' if p["syl"] and p["rec"] != mode else "")
+    return f'<div class="rec"><div class="h">{head}</div><div class="why">{why}</div>{alt}<div class="set">{pills}</div></div>'
+
+
 def build_studio(model) -> gr.Blocks:
     from omnivoice.cli.demo import _ALL_LANGUAGES, _ATTR_INFO, _AUTO_LABEL, _CATEGORIES, _VI
     ensure_dirs()
@@ -170,7 +219,7 @@ def build_studio(model) -> gr.Blocks:
                             g_dict = gr.Checkbox(value=True, label="Đổi chữ tiếng Anh sang cách đọc / Pronunciation dictionary (cotton → cốt tông)")
                         with gr.Column(elem_classes="card"):
                             gr.HTML(step("2", "Giọng / Voice", "Chọn giọng trong thư viện, hoặc tải một giọng mẫu dùng ngay (không lưu)."))
-                            g_src = gr.Radio(["Giọng trong thư viện", "Giọng tạm (tải file, không lưu)"], value="Giọng trong thư viện", show_label=False)
+                            g_src = gr.Radio(["Giọng trong thư viện", TMP_SRC], value="Giọng trong thư viện", show_label=False)
                             g_voice = gr.Dropdown(choices=first, value=first_slug, show_label=False)
                             g_vinfo = gr.HTML(voice_info(first_slug)[0])
                             g_vsample = gr.Audio(value=voice_info(first_slug)[1], label="Nghe thử giọng này / Sound test",
@@ -182,24 +231,31 @@ def build_studio(model) -> gr.Blocks:
                             g_tmp_ok = gr.Checkbox(label="Người trong file đã đồng ý cho dùng giọng này / Speaker consent given",
                                                    visible="hidden")
                         with gr.Column(elem_classes="card"):
-                            gr.HTML(step("3", "Cài đặt / Settings", "“Giống giọng mẫu nhất” tạo 3 bản rồi xếp bản giống nhất lên đầu."))
-                            g_preset = gr.Radio(list(PRESETS), value=DEFAULT_PRESET, label="Mẫu cài đặt / Preset")
+                            gr.HTML(step("3", "Cách tạo / How", "Không chắc thì cứ để app chọn: app xem độ dài văn bản và giọng đang dùng."))
+                            g_mode = gr.Radio([MODE_AUTO, *PRESETS, MODE_CUSTOM], value=MODE_AUTO, show_label=False,
+                                              elem_id="gmode")
+                            g_rec = gr.HTML(rec_html(MODE_AUTO, plan(MODE_AUTO, "", True, first_slug, "", 1, 32, 2.0), 1.0,
+                                                     fmt_default))
                             with gr.Row():
-                                g_takes = gr.Slider(1, MAX_TAKES, value=PRESETS[DEFAULT_PRESET]["takes"], step=1,
-                                                    label="Số bản / Takes", info="Nhiều bản để chọn bản giống nhất")
-                                g_lang = gr.Dropdown(langs, value="Vietnamese", label="Ngôn ngữ / Language")
-                            with gr.Row():
-                                g_name = gr.Textbox(label="Tên file / File name", placeholder="Để trống = tự đặt theo tên giọng + giờ")
-                                g_fmt = gr.Radio(["wav", "mp3"], value=fmt_default, label="Định dạng / Format")
-                            with gr.Accordion("Nâng cao / Advanced", open=False):
+                                g_speed = gr.Radio(SPEEDS, value=1.0, label="Tốc độ đọc / Speed")
+                                g_fmt = gr.Radio([("WAV · dựng video", "wav"), ("MP3 · gửi nhanh", "mp3")], value=fmt_default,
+                                                 label="Định dạng file / Format")
+                            with gr.Accordion("🛠 Tuỳ chỉnh chi tiết (chỉ khi cần) / Advanced", open=False):
+                                gr.HTML('<div class="tips">Kéo 3 thanh đầu thì cách tạo tự chuyển sang <b>🛠 Tự chỉnh</b>. '
+                                        'Bấm lại <b>✨ Để app chọn</b> để quay về đề xuất.</div>')
                                 with gr.Row():
-                                    g_steps = gr.Slider(4, 64, value=PRESETS[DEFAULT_PRESET]["num_step"], step=1,
+                                    g_takes = gr.Slider(1, MAX_TAKES, value=PRESETS[BEST]["takes"], step=1,
+                                                        label="Số bản / Takes", info="Nhiều bản để chọn bản giống nhất")
+                                    g_steps = gr.Slider(4, 64, value=PRESETS[BEST]["num_step"], step=1,
                                                         label="Số bước / Steps", info="Cao = sạch hơn, chậm hơn")
-                                    g_gs = gr.Slider(0.0, 4.0, value=2.0, step=0.1, label="Mức bám / Guidance (CFG)",
-                                                     info="Mặc định 2,0")
                                 with gr.Row():
-                                    g_speed = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="Tốc độ / Speed")
-                                    g_dur = gr.Number(value=None, label="Độ dài (giây) / Duration", info="Để trống = theo tốc độ")
+                                    g_gs = gr.Slider(0.0, 4.0, value=2.0, step=0.1, label="Mức bám / Guidance (CFG)",
+                                                     info="Mặc định 2,0. Ảnh hưởng rất ít đến độ giống")
+                                    g_dur = gr.Number(value=None, label="Độ dài (giây) / Duration",
+                                                      info="0 = theo tốc độ đọc")
+                                with gr.Row():
+                                    g_lang = gr.Dropdown(langs, value="Vietnamese", label="Ngôn ngữ / Language")
+                                    g_name = gr.Textbox(label="Tên file / File name", placeholder="Để trống = tên giọng + giờ")
                                 with gr.Row():
                                     g_dn = gr.Checkbox(value=True, label="Lọc tạp âm / Denoise")
                                     g_pre = gr.Checkbox(value=True, label="Xử lý giọng mẫu / Preprocess")
@@ -209,17 +265,17 @@ def build_studio(model) -> gr.Blocks:
                         g_btn = gr.Button("TẠO GIỌNG / GENERATE", variant="primary", elem_classes="btn-main")
                     with gr.Column(scale=4, min_width=420):
                         with gr.Column(elem_classes="card"):
-                            gr.HTML(step("✓", "Kết quả / Output", "Bản đầu tiên (★) là bản giống giọng mẫu nhất. File tự lưu."))
-                            g_msg = gr.HTML(empty("Bấm “TẠO GIỌNG” để bắt đầu."))
+                            gr.HTML(step("✓", "Kết quả / Output", "Bản ★ là bản giống giọng mẫu nhất. File tự lưu."))
+                            g_msg = gr.HTML(empty("Kết quả hiện ở đây sau khi bấm “TẠO GIỌNG”."))
                             g_outs = [gr.Audio(type="filepath", visible="hidden", interactive=False, buttons=["download"])
                                       for _ in range(MAX_TAKES)]
-                            g_table = gr.Dataframe(value=[], headers=TAKE_HEAD, interactive=False, wrap=True, buttons=[])
-                        gr.HTML("""<div class="tips"><b>Để giọng ra giống giọng mẫu 90–95%</b><br>
+                            g_table = gr.Dataframe(value=[], headers=TAKE_HEAD, interactive=False, wrap=True, buttons=[],
+                                                   visible="hidden")
+                        gr.HTML("""<div class="tips"><b>Mẹo để giọng ra giống giọng mẫu hơn</b><br>
                         1. Giọng mẫu sạch: 6–10 giây, một người nói, không nhạc nền, không vang.<br>
-                        2. Lời mẫu gõ đúng từng chữ (thẻ Thư viện → Quản lý giọng).<br>
-                        3. Chọn mẫu cài đặt <b>Giống giọng mẫu nhất</b>: tạo 3 bản, app xếp bản giống nhất lên đầu.<br>
-                        4. Câu cần đọc cùng ngôn ngữ, cùng kiểu đọc với giọng mẫu.<br>
-                        Thông số mức bám (CFG) và số bước ảnh hưởng rất ít đến độ giống (đã đo: 94,6–95,7%).</div>""")
+                        2. Lời mẫu gõ đúng từng chữ (Thư viện → ✎ Sửa).<br>
+                        3. Viết số thành chữ; câu cần đọc cùng ngôn ngữ với giọng mẫu.<br>
+                        4. Nghe chưa ưng thì bấm <b>TẠO GIỌNG</b> lần nữa: mỗi lần ra bản hơi khác.</div>""")
 
             # ══ 2. Thư viện giọng ══════════════════════════════════════════
             with gr.Tab("Thư viện giọng / Voice Library", id="lib"):
@@ -412,22 +468,24 @@ def build_studio(model) -> gr.Blocks:
         hdr = gr.HTML(header_html(), elem_id="footstatus")
 
         # ── Xử lý: Tạo giọng ────────────────────────────────────────────────
-        def est_view(text, use_d):
-            t = apply_dict(text or "") if use_d else (text or "")
-            syl, sec = estimate(t)
-            return pill(f"<b>{syl}</b> âm tiết · đọc khoảng <b>{_secs(sec)}</b>") if syl else pill("Chưa có văn bản")
+        def refresh(text, use_d, slug, src, mode, takes, steps, gs, speed, fmt):
+            """Ước tính độ dài + khung đề xuất; cách tạo khác Tự chỉnh thì đặt luôn các thanh tuỳ chỉnh cho khớp."""
+            p = plan(mode, text, use_d, slug, src, takes, steps, gs)
+            sec = p["sec"] / float(speed or 1)
+            est = pill(f"<b>{p['syl']}</b> âm tiết · đọc khoảng <b>{_secs(sec)}</b>") if p["syl"] else pill("Chưa có văn bản")
+            sliders = ([gr.update()] * 3 if mode == MODE_CUSTOM else
+                       [gr.update(value=p["takes"]), gr.update(value=p["steps"]), gr.update(value=p["gs"])])
+            return est, rec_html(mode, p, speed, fmt), *sliders
 
         def on_voice(slug):
             return voice_info(slug)
 
-        def on_preset(name):
-            p = PRESETS.get(name, PRESETS[DEFAULT_PRESET])
-            return p["takes"], p["num_step"], p["guidance_scale"]
-
         def generate(slug, text, use_d, takes, lang, name, fmt, steps, gs, speed, dur, dn, pre, post,
-                     src, tmp_audio, tmp_text, tmp_ok, instruct, progress=gr.Progress()):
+                     src, tmp_audio, tmp_text, tmp_ok, instruct, mode, progress=gr.Progress()):
             hide = {o: gr.update(value=None, visible="hidden") for o in g_outs}
-            temp = src == "Giọng tạm (tải file, không lưu)"
+            temp = src == TMP_SRC
+            p = plan(mode, text, use_d, slug, src, takes, steps, gs)
+            takes, steps, gs = p["takes"], p["steps"], p["gs"]
             if temp:
                 if not tmp_audio:
                     return {g_msg: msg("Chưa tải giọng mẫu tạm.", "bad"), **hide}
@@ -451,9 +509,9 @@ def build_studio(model) -> gr.Blocks:
             except Exception as e:
                 return {g_msg: msg(f"Lỗi khi tạo giọng: {type(e).__name__}: {e}", "bad"), **hide}
             stem = output_name(m["name"], text, name)
-            settings = dict(takes=int(takes), language=lang, num_step=steps, guidance_scale=gs, speed=speed, duration=dur,
-                            denoise=dn, preprocess=pre, postprocess=post, dictionary=use_d, instruct=instruct or None,
-                            temp_voice=temp)
+            settings = dict(mode=p["key"], takes=int(takes), language=lang, num_step=steps, guidance_scale=gs, speed=speed,
+                            duration=dur, denoise=dn, preprocess=pre, postprocess=post, dictionary=use_d,
+                            instruct=instruct or None, temp_voice=temp)
             out, rows, best_file = {}, [], None
             for i, r in enumerate(res):
                 f = st.save_output(r["wav"], stem if i == 0 else f"{stem}_ban{i + 1}", fmt)
@@ -464,8 +522,8 @@ def build_studio(model) -> gr.Blocks:
                 rk = f"{r['rank']}/{r['of']}"
                 out[g_outs[i]] = gr.update(value=str(f), visible=True,
                                            label=f"{'★ ' if i == 0 else ''}Bản {r['take']} · giống {_pct(r['sim'])} · {_secs(len(r['wav']) / st.sr)}")
-                rows.append([("★ " if i == 0 else "") + f"Bản {r['take']}", _pct(r["sim"]), lab, rk,
-                             _secs(len(r["wav"]) / st.sr), Path(f).name])
+                rows.append([("★ " if i == 0 else "") + f"Bản {r['take']}", _pct(r["sim"]), lab.split(" / ")[0], rk,
+                             _secs(len(r["wav"]) / st.sr)])
             for o in g_outs[len(res):]:
                 out[o] = gr.update(value=None, visible="hidden")
             if not temp:
@@ -481,11 +539,12 @@ def build_studio(model) -> gr.Blocks:
                 om = store.get(b["other"])
                 note = (f"<br><span class='small'>Bản này nghe gần giọng “{om['name'] if om else 'khác'}” "
                         f"({_pct(b['other_sim'])}) hơn giọng mẫu. Thử tạo thêm bản hoặc dùng giọng mẫu dài, sạch hơn.</span>")
-            out[g_msg] = msg(f"Xong {len(res)} bản. Bản giống nhất: <b>{_pct(b['sim'])}</b> ({lab}). "
-                             f"Đã lưu: <b>{Path(best_file).name}</b>"
-                             f"<br><span class='small'>Thư mục: {OUTPUTS / dt.date.today().isoformat()}</span>{note}",
+            again = "" if note else "<br><span class='small'>Nghe chưa ưng? Bấm TẠO GIỌNG lần nữa: mỗi lần ra bản hơi khác.</span>"
+            out[g_msg] = msg(f"Xong {len(res)} bản ({p['key']}). Bản giống nhất: <b>{_pct(b['sim'])}</b> "
+                             f"({lab.split(' / ')[0]}). Đã lưu: <b>{Path(best_file).name}</b>"
+                             f"<br><span class='small'>Thư mục: {OUTPUTS / dt.date.today().isoformat()}</span>{note}{again}",
                              kind)
-            out[g_table] = rows
+            out[g_table] = gr.update(value=rows, visible=True)
             out[hdr] = header_html()
             return out
 
@@ -500,7 +559,7 @@ def build_studio(model) -> gr.Blocks:
             return text.strip(), *go("gen")
 
         gen_inputs = [g_voice, g_text, g_dict, g_takes, g_lang, g_name, g_fmt, g_steps, g_gs, g_speed, g_dur, g_dn, g_pre, g_post,
-                      g_src, g_tmp_audio, g_tmp_text, g_tmp_ok, g_instruct]
+                      g_src, g_tmp_audio, g_tmp_text, g_tmp_ok, g_instruct, g_mode]
         gen_outputs = [g_msg, g_table, hdr, *g_outs]
         for trig in (home_send.click, home_text.submit):
             trig(home_go, home_text, [g_text, tabs, *nav.values()]).success(
@@ -509,17 +568,25 @@ def build_studio(model) -> gr.Blocks:
         app.load(home_hint_html, g_voice, home_hint)
         theme_btn.click(None, None, None, js=TOGGLE_JS)
 
-        g_text.change(est_view, [g_text, g_dict], g_est)
-        g_dict.change(est_view, [g_text, g_dict], g_est)
         g_voice.change(on_voice, g_voice, [g_vinfo, g_vsample])
 
         def on_src(src):
-            tmp = src == "Giọng tạm (tải file, không lưu)"
+            tmp = src == TMP_SRC
             show, hid = gr.update(visible=True), gr.update(visible="hidden")
             return [hid if tmp else show] * 3 + [show if tmp else hid] * 3
 
         g_src.change(on_src, g_src, [g_voice, g_vinfo, g_vsample, g_tmp_audio, g_tmp_text, g_tmp_ok])
-        g_preset.change(on_preset, g_preset, [g_takes, g_steps, g_gs])
+
+        # khung đề xuất cập nhật theo văn bản, giọng, cách tạo, tốc độ, định dạng
+        ref_in = [g_text, g_dict, g_voice, g_src, g_mode, g_takes, g_steps, g_gs, g_speed, g_fmt]
+        ref_out = [g_est, g_rec, g_takes, g_steps, g_gs]
+        g_text.change(refresh, ref_in, ref_out, show_progress="hidden", trigger_mode="always_last")
+        for c in (g_dict, g_voice, g_src, g_mode, g_speed, g_fmt):
+            c.change(refresh, ref_in, ref_out, show_progress="hidden")
+        app.load(refresh, ref_in, ref_out, show_progress="hidden")
+        for s in (g_takes, g_steps, g_gs):                  # người dùng tự kéo thanh → chế độ Tự chỉnh
+            s.release(lambda: MODE_CUSTOM, None, g_mode, show_progress="hidden").then(
+                refresh, ref_in, ref_out, show_progress="hidden")
         g_btn.click(generate, gen_inputs, gen_outputs, concurrency_id="gpu")
 
         # ── Xử lý: Thư viện ─────────────────────────────────────────────────
@@ -837,7 +904,7 @@ GUIDE = """
 | Bước | Thẻ | Làm gì |
 |---|---|---|
 | 1 | **Thư viện giọng** | Nghe các bản nghe thử, bấm **Dùng** ở giọng ưng ý |
-| 2 | **Tạo giọng** | Dán văn bản, chọn mẫu cài đặt, bấm **TẠO GIỌNG**. File tự lưu, bản ★ là bản giống giọng mẫu nhất |
+| 2 | **Tạo giọng** | Dán văn bản, chọn giọng, để **✨ Để app chọn** cách tạo, bấm **TẠO GIỌNG**. File tự lưu, bản ★ là bản giống giọng mẫu nhất |
 | 3 | **Thêm giọng** | Tải file 6–10 giây → **KIỂM TRA** → sửa lời mẫu → đặt tên, tích đồng ý → **LƯU** |
 | 4 | **Thiết kế giọng** | Chọn giới tính, độ tuổi, cao độ… → **THIẾT KẾ** → nghe → lưu phương án ưng ý |
 | 5 | **Lịch sử** | Nghe lại, đưa văn bản và giọng sang thẻ Tạo giọng để làm lại |
@@ -852,7 +919,8 @@ GUIDE = """
 ### Muốn giống hơn
 - Giọng mẫu sạch, 6–10 giây, một người nói, không nhạc, không vang. App tự cắt lặng và chọn đoạn tốt nhất khi file dài.
 - Lời mẫu đúng từng chữ. Sai lời mẫu là nguyên nhân hay gặp nhất khiến giọng ra lệch.
-- Dùng mẫu cài đặt **Giống giọng mẫu nhất** (3 bản, 48 bước) rồi nghe bản ★.
+- Chọn cách tạo **🎯 Giống giọng nhất** (3 bản, 48 bước) rồi nghe bản ★. "Để app chọn" tự dùng cách này cho đoạn ngắn
+  (dưới 20 giây), giọng tạm, và giọng có bản nghe thử giống dưới 92%; đoạn dài hơn dùng **⚖️ Cân bằng** (1 bản) cho đỡ chờ.
 - Mức bám (CFG) và số bước ảnh hưởng rất ít: đo trên 5 giọng × 8 bộ thông số chỉ chênh 94,6–95,7%.
 
 ### Quy tắc
