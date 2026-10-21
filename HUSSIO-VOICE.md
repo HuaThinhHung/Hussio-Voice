@@ -24,6 +24,7 @@ uv sync
 |---|---|---|
 | Dùng trên chính máy này | `uv run omnivoice-demo` | http://localhost:10601 |
 | Cho máy khác trong mạng công ty dùng | `uv run omnivoice-demo --ip 0.0.0.0` | http://IP-máy-chạy:10601 |
+| Demo cho sếp (cùng mạng LAN), một lần bấm | bấm đúp `HUSSIO Voice - Demo LAN.bat`: tự tắt app cũ, tìm IP, chép link, mở cho LAN | link hiện trong cửa sổ (đã chép sẵn) |
 
 Tắt: `Ctrl + C` trong cửa sổ Terminal.
 
