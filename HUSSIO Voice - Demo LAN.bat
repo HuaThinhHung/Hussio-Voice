@@ -29,5 +29,5 @@ echo     Xem xong: DONG CUA SO NAY de tat che do LAN.
 echo     Dung lai tren may minh: bam "HUSSIO Voice.bat".
 echo   ==========================================================
 echo.
-uv run omnivoice-demo --ip 0.0.0.0
+".venv-win\Scripts\python.exe" -m omnivoice.cli.demo --ip 0.0.0.0
 pause

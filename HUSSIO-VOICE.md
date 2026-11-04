@@ -18,12 +18,23 @@ cd HUSSIO-Voice
 uv sync
 ```
 
+**Windows bật Smart App Control** (máy Hưng từ 11/2026): Windows chặn các file `.exe` uv tạo trong `.venv\Scripts`
+(không ký số, lỗi `os error 4551`). Dùng môi trường `.venv-win` tạo từ Python bản chính thức python.org (có chữ ký số):
+
+```
+winget install --id Python.Python.3.12 -e --scope user
+%LOCALAPPDATA%\Programs\Python\Python312\python.exe -m venv .venv-win
+uv export --frozen --no-hashes --no-dev --no-emit-project -o req.txt
+uv pip install --python .venv-win\Scripts\python.exe -r req.txt --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
+uv pip install --python .venv-win\Scripts\python.exe --no-deps -e .
+```
+
 ## Chạy
 
 | Mục đích | Lệnh | Mở |
 |---|---|---|
-| Dùng trên chính máy này | `uv run omnivoice-demo` | http://localhost:10601 |
-| Cho máy khác trong mạng công ty dùng | `uv run omnivoice-demo --ip 0.0.0.0` | http://IP-máy-chạy:10601 |
+| Dùng trên chính máy này | bấm đúp `HUSSIO Voice.bat`, hoặc `.venv-win\Scripts\python.exe -m omnivoice.cli.demo` (máy không có Smart App Control: `uv run omnivoice-demo`) | http://localhost:10601 |
+| Cho máy khác trong mạng công ty dùng | `.venv-win\Scripts\python.exe -m omnivoice.cli.demo --ip 0.0.0.0` | http://IP-máy-chạy:10601 |
 | Demo cho sếp (cùng mạng LAN), một lần bấm | bấm đúp `HUSSIO Voice - Demo LAN.bat`: tự tắt app cũ, tìm IP, chép link, mở cho LAN | link hiện trong cửa sổ (đã chép sẵn) |
 
 Tắt: `Ctrl + C` trong cửa sổ Terminal.
